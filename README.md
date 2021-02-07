@@ -351,6 +351,9 @@ thread 35402 panic: index out of bounds
 Aborted (core dumped)
 ```
 
+## samples
+
+All code samples here are available in this repo : https://github.com/pmalhaire/helloZig.
 
 
 ## Conclusion
