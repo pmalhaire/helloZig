@@ -59,7 +59,7 @@ let's try zig with a simple async io/buffer.
 
 goal is write / read async char by char.
 
-### step 1 sync lifo
+### step 1 alloc
 
 what we need :
 
@@ -139,6 +139,8 @@ run the test
 zig test alloc.zig
 ```
 
+### step 2 :sync lifo
+
 Now that the allocation is cleared. Let's now get back to our buffer.
 
 Many zig function use the maybe concept.
@@ -154,3 +156,102 @@ This is a very elegant way of handling error and avoid other language issues :
 
 
 see https://ziglang.org/documentation/master/#Errors
+
+#### code
+
+
+We write 4 functions :
+
+init
+
+```
+fn init(size: u32, a: *Allocator) Error!*Buff {
+```
+
+write
+
+```
+fn write(b: *Buff, c: u8) void {
+```
+
+read
+
+```
+fn read(b: *Buff) u8 {
+```
+
+
+close
+```
+fn close(b: *Buff) void {
+```
+
+#### test it
+
+```
+zig run sync_buff.zig
+```
+
+#### safety
+
+Let's try to read a value that is not there.
+
+uncomment the overflow error in sync_buff.zig
+
+```
+zig run sync_buff.zig
+```
+
+error :
+
+```
+thread 34197 panic: integer overflow
+/home/pierrot/dev/helloZig/sync_buff.zig:44:14: 0x2363d1 in read (sync_buff)
+    b.offset -= 1;
+             ^
+/home/pierrot/dev/helloZig/sync_buff.zig:78:19: 0x22ddb4 in main (sync_buff)
+    const f = read(buff);
+                  ^
+/home/pierrot/.zig/lib/std/start.zig:345:37: 0x205684 in std.start.posixCallMainAndExit (sync_buff)
+            const result = root.main() catch |err| {
+                                    ^
+/home/pierrot/.zig/lib/std/start.zig:163:5: 0x205522 in std.start._start (sync_buff)
+    @call(.{ .modifier = .never_inline }, posixCallMainAndExit, .{});
+    ^
+Aborted (core dumped)
+```
+
+Let's try to read a value that is not there.
+
+uncomment the out of bound error in sync_buff.zig
+
+```
+zig run sync_buff.zig
+```
+
+error :
+
+
+```
+thread 35402 panic: index out of bounds
+/home/pierrot/dev/helloZig/sync_buff.zig:38:11: 0x2362a9 in write (sync_buff)
+    b.addr[b.offset] = c;
+          ^
+/home/pierrot/dev/helloZig/sync_buff.zig:83:64: 0x22ddec in main (sync_buff)
+    write(buff, '1'); write(buff, '2'); write(buff, '3'); write(buff, '4');
+                                                               ^
+/home/pierrot/.zig/lib/std/start.zig:345:37: 0x205684 in std.start.posixCallMainAndExit (sync_buff)
+            const result = root.main() catch |err| {
+                                    ^
+/home/pierrot/.zig/lib/std/start.zig:163:5: 0x205522 in std.start._start (sync_buff)
+    @call(.{ .modifier = .never_inline }, posixCallMainAndExit, .{});
+    ^
+Aborted (core dumped)
+```
+
+
+
+## Conclusion
+
+Zig is definetly simple for an experienced developper. It exposes in a simple maner complex concepts.
+It's a very good language to have in your toolbox. It will probably grow fast in the coming years.
