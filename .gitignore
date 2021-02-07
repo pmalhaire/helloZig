@@ -1,0 +1,2 @@
+# ignore zig cache files
+zig-cache
