@@ -1,4 +1,4 @@
-# hello zig : explore zig with tmux and vim
+# hello zig : explore zig through a LIFO buffer
 
 why this repo. i explored many languages from functionnal to assembly.
 
@@ -41,14 +41,16 @@ pub fn main() void {
 }
 ```
 
-it looks strange at first but why not.
+It looks strange at first but why not.
 
-there we can see that zig is not a hypster language. from the first function
+There we can see that zig is not a hype language. from the first function
 choices have been made.
 
-## doc
+## doc generation
 
-auto doc is under see : https://github.com/tiehuis/zig-docgen
+Not ready yet.
+
+Auto doc is underway see : https://github.com/tiehuis/zig-docgen
 
 
 ## doing a basic io/buffer
@@ -69,17 +71,28 @@ struct : https://ziglang.org/documentation/master/#struct
 
 memory : https://ziglang.org/documentation/master/#memory
 
-that's all slice will be usefull next, but first make it simple.
-
-wrong here : slice are forced by the language no pointer arithmetics !
+Note : At first you may want to use pointer arithmetics. But slices are forced by the language no pointer arithmetics !
 
 https://github.com/ziglang/zig/issues/45
 
-let's use slice then.
+#### slices
 
-it's where it became complex
+Slice follow a very similar syntax than golang one :
 
-let's keep `sync_buff_0.zig` as a reference of what not to do.
+```
+// write a slice
+const slice: []const u8 = "hello slice";
+// write an array
+const array: [11]u8 = "hello array".*;
+```
+
+see : https://ziglang.org/documentation/master/#Slices
+
+
+### test alloc sample
+
+It's where `zig` doc must be read.
+
 
 and make a small alloc sample
 
@@ -89,7 +102,8 @@ and make a small alloc sample
 
 
 here zig has a nice test feature :
-let's use it
+let's use it. see https://ziglang.org/documentation/master/#Zig-Test
+
 
 ```
 const std = @import("std");
@@ -120,33 +134,23 @@ test "try to allocate memory" {
 ```
 
 run the test
+
 ```
 zig test alloc.zig
 ```
 
-Let's now get back to our buffer :
+Now that the allocation is cleared. Let's now get back to our buffer.
 
-The only issue was the try : many zig function use the maybe concept.
-
-std:optionnal in cpp
-Maybe monad in Haskell
+Many zig function use the maybe concept.
+Coming fron the `Maybe monad` in Haskell then adapted to other languages.
+For example the `std:optionnal` in cpp.
 
 This tells that a function either succeed or returns an error :
+`ErrorType!ReturnType`
 
-ErrorType!ReturnType
-
-This is a very elegant way of handling error and avoids the
-
-if error checks of golang
-
-of the exception handling in python or cpp
+This is a very elegant way of handling error and avoid other language issues :
+- If error checks of golang (improved since 1.13).
+- Exception handling in python (not improved here).
 
 
-
-
-
-
-
-
-
-
+see https://ziglang.org/documentation/master/#Errors

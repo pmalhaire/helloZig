@@ -29,7 +29,7 @@ fn init(size: u32, a: *Allocator) Error!*Buff {
 
 /// close the given buffer and free it's memory
 fn close(b: *Buff) void {
-    b.allocator.free(ptr);
+    b.allocator.free(b.addr);
 }
 
 /// write c into our buffer
@@ -51,12 +51,13 @@ pub fn main() !void {
     var alloc = &gpa.allocator;
 
     var buff = try init(10, alloc);
+    defer close(buff);
 
-    std.debug.print("writing a\n", .{});
+    std.debug.print("writing 'a' to buff\n", .{});
     write(buff, 'a');
 
 
-    std.debug.print("reading one char\n", .{});
+    std.debug.print("reading one char from buff\n", .{});
     const c = read(buff);
     std.debug.print("char is : {c}\n", .{c});
 }
