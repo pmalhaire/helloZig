@@ -1,2 +1,5 @@
 # ignore zig cache files
 zig-cache
+
+# ignore test exe
+/io_uring
