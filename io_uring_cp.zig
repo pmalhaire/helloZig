@@ -152,7 +152,7 @@ pub fn main() anyerror!void {
             // this seams wrong as we are not granted the read size
             remaining -= size;
 
-            inflight += 2;
+            inflight += 1;
         }
         var res = try ring.submit();
         if (verbose) {
@@ -186,7 +186,7 @@ pub fn main() anyerror!void {
             // this seams wrong as we are not granted the read size
             write_remaining -= size;
 
-            write_inflight += 2;
+            write_inflight += 1;
 
         }
         var res_w = try ring.submit();
@@ -197,11 +197,35 @@ pub fn main() anyerror!void {
             });
         }
         _ = try ring.enter(
-            @intCast(u32, inflight),
-            @intCast(u32, inflight),
+            @intCast(u32, inflight + write_inflight),
+            @intCast(u32, inflight + write_inflight),
             os.linux.IORING_ENTER_GETEVENTS,
         );
         while (inflight > 0) : (inflight -= 1) {
+            // wait for both cqe
+            var cqe = try ring.copy_cqe();
+            if (verbose) {
+                std.debug.print("received {} cqe \n", .{
+                    cqe,
+                });
+            }
+            if (cqe.res < 0) {
+                switch (cqe.res) {
+                    // os.ECANCELED => {
+                    //     offset = user_data_el.offset;
+                    // },
+                    - os.EINVAL => {
+                        std.debug.warn("either you're trying to read too much data (can't read more than a isize), or the number of iovecs in a single SQE is > 1024\n", .{});
+                        std.process.exit(1);
+                    },
+                    else => {
+                        std.debug.warn("cqe errno: {}", .{cqe.res});
+                        std.process.exit(1);
+                    },
+                }
+            }
+        }
+        while (write_inflight > 0) : (write_inflight -= 1) {
             // wait for both cqe
             var cqe = try ring.copy_cqe();
             if (verbose) {
