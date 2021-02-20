@@ -1,7 +1,7 @@
 const std = @import("std");
 const os = std.os;
 
-/// borrowed from  Vincent Rischmann thx to him
+/// some code is borrowed from  Vincent Rischmann thx to him
 
 pub fn setup(entries: usize, params: *os.linux.io_uring_params) !os.fd_t {
     @memset(@ptrCast([*]align(8) u8, params), 0, @sizeOf(@TypeOf(params.*)));
@@ -13,138 +13,6 @@ pub fn setup(entries: usize, params: *os.linux.io_uring_params) !os.fd_t {
 
     return @intCast(i32, ring_fd);
 }
-
-// pub const CompletionRing = struct {
-//     const Self = @This();
-
-//     head: *u32,
-//     tail: *u32,
-//     mask: *u32,
-//     entries: *u32,
-//     overflow: *u32,
-
-//     cqes: []os.linux.io_uring_cqe,
-
-//     ring_size: usize,
-
-//     pub fn init(ring_fd: i32, cq_entries: u32, cq_off: os.linux.io_cqring_offsets) !Self {
-//         var res: CompletionRing = undefined;
-//         res.ring_size = cq_off.cqes + cq_entries * @sizeOf(os.linux.io_uring_cqe);
-
-//         // Initialize the completion queue
-
-//         const mapped = try os.mmap(
-//             null,
-//             res.ring_size,
-//             os.PROT_READ | os.PROT_WRITE,
-//             os.MAP_SHARED | os.MAP_POPULATE,
-//             ring_fd,
-//             os.linux.IORING_OFF_CQ_RING,
-//         );
-//         const ptr: usize = @ptrToInt(@ptrCast([*]u8, mapped));
-
-//         res.head = @intToPtr(*u32, ptr + cq_off.head);
-//         res.tail = @intToPtr(*u32, ptr + cq_off.tail);
-//         res.mask = @intToPtr(*u32, ptr + cq_off.ring_mask);
-//         res.entries = @intToPtr(*u32, ptr + cq_off.ring_entries);
-//         res.overflow = @intToPtr(*u32, ptr + cq_off.overflow);
-
-//         res.cqes = @intToPtr([*]os.linux.io_uring_cqe, ptr + cq_off.cqes)[0..res.entries.*];
-
-//         return res;
-//     }
-
-//     pub fn get(self: *Self) ?*os.linux.io_uring_cqe {
-//         var head = self.head.*;
-//         @fence(.SeqCst);
-
-//         const entry = if (head != self.tail.*) blk: {
-//             const index = head & self.mask.*;
-//             head += 1;
-//             break :blk &self.cqes[index];
-//         } else null;
-
-//         self.head.* = head;
-//         @fence(.SeqCst);
-
-//         return entry;
-//     }
-// };
-
-// pub const SubmissionRing = struct {
-//     const Self = @This();
-
-//     ring_fd: i32,
-//     ring_size: u32,
-
-//     head: *u32,
-//     tail: *u32,
-//     mask: *u32,
-//     entries: *u32,
-//     flags: *u32,
-//     dropped: *u32,
-//     array: [*]u32,
-
-//     sqes: []os.linux.io_uring_sqe,
-
-//     pub fn init(ring_fd: i32, sq_entries: u32, sq_off: os.linux.io_sqring_offsets) !Self {
-//         var res: SubmissionRing = undefined;
-//         res.ring_fd = ring_fd;
-//         res.ring_size = sq_off.array + sq_entries * @sizeOf(u32);
-
-//         // Initialize the submission queue
-
-//         {
-//             const mapped = try os.mmap(
-//                 null,
-//                 res.ring_size,
-//                 os.PROT_READ | os.PROT_WRITE,
-//                 os.MAP_SHARED | os.MAP_POPULATE,
-//                 ring_fd,
-//                 os.linux.IORING_OFF_SQ_RING,
-//             );
-//             const ptr: usize = @ptrToInt(@ptrCast([*]u8, mapped));
-
-//             res.head = @intToPtr(*u32, ptr + sq_off.head);
-//             res.tail = @intToPtr(*u32, ptr + sq_off.tail);
-//             res.mask = @intToPtr(*u32, ptr + sq_off.ring_mask);
-//             res.entries = @intToPtr(*u32, ptr + sq_off.ring_entries);
-//             res.flags = @intToPtr(*u32, ptr + sq_off.flags);
-//             res.dropped = @intToPtr(*u32, ptr + sq_off.dropped);
-//             res.array = @intToPtr([*]u32, ptr + sq_off.array);
-//         }
-
-//         // Initialize the submission queue entries
-
-//         {
-//             const ptr = try os.mmap(
-//                 null,
-//                 sq_entries * @sizeOf(os.linux.io_uring_sqe),
-//                 os.PROT_READ | os.PROT_WRITE,
-//                 os.MAP_SHARED | os.MAP_POPULATE,
-//                 ring_fd,
-//                 os.linux.IORING_OFF_SQES,
-//             );
-//             res.sqes = @ptrCast([*]os.linux.io_uring_sqe, ptr)[0..res.entries.*];
-//         }
-
-//         return res;
-//     }
-
-//     pub fn next(self: *Self) ?*os.linux.io_uring_sqe {
-//         const head = self.head.*;
-//         @fence(.SeqCst);
-//         const next_tail = self.tail.* + 1;
-
-//         return if (next_tail - head <= self.entries.*) blk: {
-//             const index = self.tail.* & self.mask.*;
-//             self.array[index] = index;
-//             self.tail.* = next_tail;
-//             break :blk &self.sqes[index];
-//         } else null;
-//     }
-// };
-
 
 const UserData = struct {
     const Self = @This();
@@ -344,6 +212,5 @@ pub fn main() anyerror!void {
                 }
             }
         }
-
     }
 }
