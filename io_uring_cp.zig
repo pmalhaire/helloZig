@@ -121,6 +121,9 @@ pub fn main() anyerror!void {
     // loop until all file is copied
     while (remaining > 0) {
         var original_inflight = inflight;
+        var write_inflight = inflight;
+        var write_offset = offset;
+        var write_remaining = remaining;
 
         while (remaining > 0 and inflight < nb_sqes) {
             // choose iovector
@@ -145,49 +148,59 @@ pub fn main() anyerror!void {
                 el.opcode = .READV;
                 sqe.user_data = @intCast(u64, @ptrToInt(el));
             }
-            var read_res = try ring.submit();
-            if (verbose) {
-                std.debug.print("submit read inflight {} {} sqe \n", .{
-                    inflight,
-                    read_res,
-                });
-            }
-
-            {
-                // submit write for outputfile
-                var sqe = try ring.get_sqe();
-                sqe.opcode = .WRITEV;
-                sqe.fd = output_file.handle;
-                sqe.addr = @ptrCast(*u64, &iovec).*;
-                sqe.off = @intCast(u64, offset);
-                sqe.len = @intCast(u32, 1);
-
-                var el = &write_user_data[inflight];
-                el.iovec = iovec;
-                el.opcode = .WRITEV;
-                sqe.user_data = @intCast(u64, @ptrToInt(el));
-            }
-            var write_res = try ring.submit();
-            if (verbose) {
-                std.debug.print("submit write inflight {} {} sqe \n", .{
-                    inflight,
-                    write_res,
-                });
-            }
             offset += size;
             // this seams wrong as we are not granted the read size
             remaining -= size;
 
             inflight += 2;
         }
-
-        if (original_inflight != inflight) {
-            _ = try ring.enter(
-                @intCast(u32, inflight),
-                @intCast(u32, inflight),
-                os.linux.IORING_ENTER_GETEVENTS,
-            );
+        var res = try ring.submit();
+        if (verbose) {
+            std.debug.print("submit inflight {} {} sqe \n", .{
+                inflight,
+                res,
+            });
         }
+        while (write_remaining > 0 and write_inflight < nb_sqes) {
+            // choose iovector
+            var iovec = &iovecs[write_inflight];
+
+            // read iovec_size or write_remaining id < iovec_size
+            const size = if (write_remaining > iovec_size) iovec_size else write_remaining;
+            iovec.iov_len = size;
+            {
+                // submit write for outputfile
+                var sqe = try ring.get_sqe();
+                sqe.opcode = .WRITEV;
+                sqe.fd = output_file.handle;
+                sqe.addr = @ptrCast(*u64, &iovec).*;
+                sqe.off = @intCast(u64, write_offset);
+                sqe.len = @intCast(u32, 1);
+
+                var el = &write_user_data[write_inflight];
+                el.iovec = iovec;
+                el.opcode = .WRITEV;
+                sqe.user_data = @intCast(u64, @ptrToInt(el));
+            }
+            write_offset += size;
+            // this seams wrong as we are not granted the read size
+            write_remaining -= size;
+
+            write_inflight += 2;
+
+        }
+        var res_w = try ring.submit();
+        if (verbose) {
+            std.debug.print("submit res_w inflight {} {} sqe \n", .{
+                inflight,
+                res_w,
+            });
+        }
+        _ = try ring.enter(
+            @intCast(u32, inflight),
+            @intCast(u32, inflight),
+            os.linux.IORING_ENTER_GETEVENTS,
+        );
         while (inflight > 0) : (inflight -= 1) {
             // wait for both cqe
             var cqe = try ring.copy_cqe();
@@ -206,7 +219,7 @@ pub fn main() anyerror!void {
                         std.process.exit(1);
                     },
                     else => {
-                        std.debug.warn("errno: {}", .{cqe.res});
+                        std.debug.warn("cqe errno: {}", .{cqe.res});
                         std.process.exit(1);
                     },
                 }
