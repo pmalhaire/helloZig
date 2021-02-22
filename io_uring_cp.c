@@ -16,9 +16,12 @@
 
 static int infd, outfd;
 
+#define READ true
+#define WRITE false
+
 struct io_data
 {
-    int read;
+    bool rw_flag;
     off_t first_offset, offset;
     size_t first_len;
     struct iovec iov;
@@ -79,7 +82,7 @@ static void queue_prepped(struct io_uring *ring, struct io_data *data)
     assert(sqe);
 
     // choose read or write depending on flag
-    if (data->read)
+    if (data->rw_flag == READ)
         io_uring_prep_readv(sqe, infd, &data->iov, 1, data->offset);
     else
         io_uring_prep_writev(sqe, outfd, &data->iov, 1, data->offset);
@@ -108,7 +111,7 @@ static int queue_read(struct io_uring *ring, off_t size, off_t offset)
         return 1;
 
     // set read flag
-    data->read = 1;
+    data->rw_flag = READ;
     data->offset = data->first_offset = offset;
 
     data->iov.iov_base = data + 1;
@@ -126,7 +129,7 @@ static void queue_write(struct io_uring *ring, struct io_data *data)
     printf("queue_write ring:%p io_data:%p\n", ring, data);
 #endif
     // indicate write flag
-    data->read = 0;
+    data->rw_flag = WRITE;
     data->offset = data->first_offset;
 
     data->iov.iov_base = data + 1;
@@ -136,51 +139,61 @@ static void queue_write(struct io_uring *ring, struct io_data *data)
     io_uring_submit(ring);
 }
 
-int copy_file(struct io_uring *ring, off_t insize)
+int copy_file(struct io_uring *ring, const off_t insize)
 {
 #ifdef DEBUG
     printf("copy_file ring:%p insize:%d\n", ring, insize);
 #endif
+    // reads and writes counts
     unsigned long reads, writes;
+    // completion queue
     struct io_uring_cqe *cqe;
-    off_t write_left, offset;
+    // write_left bytes and offset
+    off_t write_left, read_left, offset;
     int ret;
 
-    write_left = insize;
+    // at start entire file has to be read and written
+    write_left = read_left = insize;
     writes = reads = offset = 0;
 
-    while (insize || write_left)
+    // try to write until the end
+    while (write_left)
     {
 #ifdef DEBUG
-        printf("|_copy_file->LOOP insize:%d write_left:%d\n", insize, write_left);
+        printf("|_copy_file->LOOP read_left:%d write_left:%d\n", read_left, write_left);
 #endif
         int had_reads, got_comp;
 
         /* Queue up as many reads as we can */
-        had_reads = reads;
-        while (insize)
+        bool read_done = false;
+        while (read_left)
         {
 #ifdef DEBUG
-            printf(" |_copy_file->LOOP->QUEUE_READ insize:%d\n", insize);
+            printf(" |_copy_file->LOOP->QUEUE_READ read_left:%d\n", read_left);
 #endif
-            off_t this_size = insize;
 
             if (reads + writes >= QD)
                 break;
-            if (this_size > BS)
-                this_size = BS;
-            else if (!this_size)
+            // if no more to read break
+            if (!read_left)
                 break;
+            // if the size is bigger than block size
+            // just read one block
+            off_t read_size = read_left > BS ? BS : read_left;
 
-            if (queue_read(ring, this_size, offset))
+            // try to read
+            if (queue_read(ring, read_size, offset))
+            {
                 break;
+            }
 
-            insize -= this_size;
-            offset += this_size;
+            read_left -= read_size;
+            offset += read_size;
             reads++;
+            read_done = true;
         }
 
-        if (had_reads != reads)
+        if (read_done)
         {
 #ifdef DEBUG
             printf("|_copy_file->LOOP submit ring:%p\n", ring);
@@ -263,13 +276,12 @@ int copy_file(struct io_uring *ring, off_t insize)
              * All done. If write, nothing else to do. If read,
              * queue up corresponding write.
              * */
-
-            if (data->read)
+#ifdef DEBUG
+            printf(" |_copy_file->LOOP->cqe queue_write data->rw_flag:%d\n", data->rw_flag);
+#endif
+            if (data->rw_flag == READ)
             {
                 // if we are reading data transfer it to the write buffer
-#ifdef DEBUG
-                printf(" |_copy_file->LOOP->cqe queue_write data->read:%d\n", data->read);
-#endif
                 queue_write(ring, data);
                 write_left -= data->first_len;
                 reads--;
