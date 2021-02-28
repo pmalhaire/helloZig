@@ -9,7 +9,7 @@
 #include <sys/ioctl.h>
 #include <liburing.h>
 
-#define DEBUG 1
+//#define DEBUG 1
 
 #define QD 32
 #define BS (16 * 1024)
