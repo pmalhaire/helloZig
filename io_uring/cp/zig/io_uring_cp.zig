@@ -93,8 +93,6 @@ pub fn main() anyerror!void {
     var params: os.linux.io_uring_params = undefined;
     const ring_fd = try setup(nb_sqes, &params);
 
-    // var sring = try SubmissionRing.init(ring_fd, params.sq_entries, params.sq_off);
-    // var cring = try CompletionRing.init(ring_fd, params.cq_entries, params.cq_off);
     var ring = try std.os.linux.IO_Uring.init(32, 0);
     // Allocate the user data and initialize it.
     // Our user data also owns the iovecs filled by the kernel.
