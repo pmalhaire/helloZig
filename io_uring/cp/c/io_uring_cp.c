@@ -168,8 +168,9 @@ int copy_file(struct io_uring *ring, const off_t insize)
     // flag used submit io for read
     bool read_done;
 
-    // try to write until the end
-    while (write_left)
+    // try to write until the end : write_left
+    // wait for last write submission writes > 0
+    while (write_left || writes > 0)
     {
 #ifdef DEBUG
         printf("|_copy_file->LOOP read_left:%d write_left:%d\n", read_left, write_left);
