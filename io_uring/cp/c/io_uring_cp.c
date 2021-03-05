@@ -112,6 +112,8 @@ static int queue_read(struct io_uring *ring, off_t size, off_t offset)
 
     // set read flag
     data->rw_flag = READ;
+
+    // set offset
     data->offset = data->first_offset = offset;
 
     data->iov.iov_base = data + 1;
@@ -349,24 +351,3 @@ int main(int argc, char *argv[])
     io_uring_queue_exit(&ring);
     return ret;
 }
-
-// good way
-
-// initial case
-// read = file_size
-// write = 0
-// case 1
-// read < file_size
-// write > 0
-// case 2
-// read = 0
-// write < file_size
-
-// while write not finished
-//    while read not finished && sub_queue not full
-//        enqueue read
-//    while write not finished && sub_queue not full && read to write
-//        enqueue write
-//    wait for completion
-//    if read -> to buffer update read left
-//    if write ->          update write left

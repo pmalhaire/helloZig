@@ -1,7 +1,24 @@
 const std = @import("std");
 const os = std.os;
 
+
+const DEBUG: bool = false;
+
+const QD :usize = 32;
+const BS :usize = (16 * 1024);
+
+var infd :std.fs.File = undefined;
+var outfd :std.fs.File = undefined;
+
 /// some code is borrowed from  Vincent Rischmann thx to him
+
+const UserData = struct {
+    opcode: os.linux.IORING_OP,
+    first_offset: usize,
+    offset: usize,
+    first_len :usize,
+    iov: *os.iovec,
+};
 
 pub fn setup(entries: usize, params: *os.linux.io_uring_params) !os.fd_t {
     @memset(@ptrCast([*]align(8) u8, params), 0, @sizeOf(@TypeOf(params.*)));
@@ -14,238 +31,209 @@ pub fn setup(entries: usize, params: *os.linux.io_uring_params) !os.fd_t {
     return @intCast(i32, ring_fd);
 }
 
-const UserData = struct {
-    const Self = @This();
+pub fn queue_prepped(ring :os.linux.IO_Uring, ioData :*UserData) !void
+{
 
-    opcode: os.linux.IORING_OP,
-    iovec: *os.iovec,
-
-    pub fn printIovec(self: *Self) void {
-        const slice = self.iovec.iov_base[0..self.iovec.iov_len];
-        std.debug.warn("{} (size = {})\n", .{ slice, slice.len });
+    if (DEBUG){
+            std.debug.print("queue_prepped {} {}\n", .{
+                ring,
+                ioData,
+            });
     }
-};
+    var sqe = try ring.get_sqe();
+
+    if (ioData.opcode == .READV)  {
+        sqe.opcode = .READV;
+        sqe.fd = infd.handle;
+        sqe.flags |= std.os.linux.IOSQE_IO_LINK;
+        sqe.addr = @ptrCast(*u64, &iovec).*;
+        sqe.off = @intCast(u64, offset);
+        sqe.len = @intCast(u32, 1);
+        var el = &read_user_data[inflight];
+        el.iov = iovec;
+        el.opcode = .READV;
+        sqe.user_data = @intCast(u64, @ptrToInt(el));
+    } else {
+        sqe.opcode = .WRITEV;
+        sqe.fd = outfd.handle;
+        sqe.addr = @ptrCast(*u64, &iovec).*;
+        sqe.off = @intCast(u64, write_offset);
+        sqe.len = @intCast(u32, 1);
+
+        var el = &write_user_data[write_inflight];
+        el.iov = iovec;
+        el.opcode = .WRITEV;
+        sqe.user_data = @intCast(u64, @ptrToInt(el));
+    }
+}
+
+pub fn queue_read(ring :*os.linux.IO_Uring, size :usize, offset :usize) !void
+{
+    // submit read for input file
+    var sqe = try ring.get_sqe();
+    sqe.opcode = .READV;
+    sqe.fd = infd.handle;
+    sqe.flags |= std.os.linux.IOSQE_IO_LINK;
+    //sqe.addr = @ptrCast(*u64, &iovec).*;
+    sqe.off = @intCast(u64, offset);
+    sqe.len = @intCast(u32, 1);
+
+    // var el = &read_user_data[inflight];
+    // el.iov = iovec;
+    // el.opcode = .READV;
+    // sqe.user_data = @intCast(u64, @ptrToInt(el));
+}
+
+pub fn queue_write(ring :os.linux.IO_Uring, size :usize, offset :usize) !void
+{
+    // submit read for input file
+    const sqe = try ring.get_sqe();
+    sqe.opcode = .WRITEV;
+    sqe.fd = outfd.handle;
+    sqe.addr = @ptrCast(*u64, &iovec).*;
+    sqe.off = @intCast(u64, write_offset);
+    sqe.len = @intCast(u32, 1);
+
+    var el = &write_user_data[write_inflight];
+    el.iov = iovec;
+    el.opcode = .WRITEV;
+    sqe.user_data = @intCast(u64, @ptrToInt(el));
+}
 
 pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     var allocator = &arena.allocator;
 
-    // Parse the process arguments
 
     var args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    // Default values for the tunables:
-    //  * 8 SQE
-    //  * 128KiB per iovec
-    var nb_sqes: usize = 8;
-    var iovec_size: usize = 131072;
-
-    if (args.len < 3) {
-        std.debug.warn("Usage: zig-uring <source> <target>", .{});
-        std.process.exit(1);
-    }
-
-    var verbose: bool = false;
-    var start_positional_arg_pos: usize = 1;
-    for (args) |arg, i| {
-        if (i == 0) continue;
-
-        if (std.mem.startsWith(u8, arg, "--nb-sqes=")) {
-            const value = std.mem.trimLeft(u8, arg, "--nb-sqes=");
-            nb_sqes = try std.fmt.parseInt(usize, value, 10);
-        } else if (std.mem.startsWith(u8, arg, "--iovec-size=")) {
-            const value = std.mem.trimLeft(u8, arg, "--iovec-size=");
-            iovec_size = try std.fmt.parseInt(usize, value, 10);
-        } else if (std.mem.eql(u8, arg, "--verbose")) {
-            verbose = true;
-        } else {
-            start_positional_arg_pos = i;
-            break;
-        }
-    }
-
-    if (verbose) {
-        std.debug.warn("copying {s} to {s}\n", .{
-            args[start_positional_arg_pos],
-            args[start_positional_arg_pos + 1],
+    if (DEBUG) {
+        std.debug.print("copying {s} to {s}\n", .{
+            args[1],
+            args[2],
         });
     }
 
-    var file = try std.fs.cwd().openFile(args[start_positional_arg_pos], .{});
-    defer file.close();
-    var output_file = try std.fs.cwd().createFile(args[start_positional_arg_pos + 1], .{});
-    defer output_file.close();
+    infd = try std.fs.cwd().openFile(args[1], .{});
+    defer infd.close();
+    outfd = try std.fs.cwd().createFile(args[2], .{});
+    defer outfd.close();
 
-    // Validate the tunables.
-
-    if (verbose) {
+    if (DEBUG) {
         std.debug.warn("nb SQEs: {} ; iovec size: {}\n", .{
-            nb_sqes,
-            iovec_size,
+            QD,
+            BS,
         });
     }
 
-    const file_size = (try file.stat()).size;
+    const insize = (try infd.stat()).size;
 
     // Initialize io_
     var params: os.linux.io_uring_params = undefined;
-    const ring_fd = try setup(nb_sqes, &params);
+    const ring_fd = try setup(QD, &params);
 
     var ring = try std.os.linux.IO_Uring.init(32, 0);
-    // Allocate the user data and initialize it.
-    // Our user data also owns the iovecs filled by the kernel.
-    var iovecs = try allocator.alloc(os.iovec, nb_sqes);
-    for (iovecs) |_, i| {
-        var buf = try allocator.allocWithOptions(u8, iovec_size, null, null);
-        iovecs[i].iov_base = @ptrCast([*]u8, buf);
-        iovecs[i].iov_len = buf.len;
-    }
 
-    var read_user_data = try allocator.alloc(UserData, nb_sqes);
-    var write_user_data = try allocator.alloc(UserData, nb_sqes);
-
-    // State needed to fully read the file.
-    //
-    // Remaining bytes to read in the file.
-    var remaining = file_size;
-    // Current user data in the slice of user data.
-    // Always 0 <= current_user_data < user_data.len.
-    var inflight: usize = 0;
-    // Offset into the file to read in the next syscalls.
+    var reads: usize = 0;
+    var writes: usize = 0;
     var offset: usize = 0;
 
-    // loop until all file is copied
-    while (remaining > 0) {
-        var original_inflight = inflight;
-        var write_inflight = inflight;
-        var write_offset = offset;
-        var write_remaining = remaining;
+    var write_left: usize = insize;
+    var read_left: usize = insize;
 
-        while (remaining > 0 and inflight < nb_sqes) {
+    // flag used submit io for read
+    var read_done: bool = false;
+
+    // try to write until the end : write_left
+    // wait for last write submission writes > 0
+    while ( write_left > 0 or writes > 0 )
+    {
+
+        read_done = false;
+
+        while (read_left > 0)
+        {
             // choose iovector
-            var iovec = &iovecs[inflight];
+            //var iovec = &iovecs[inflight];
 
-            // read iovec_size or remaining id < iovec_size
-            const size = if (remaining > iovec_size) iovec_size else remaining;
-            iovec.iov_len = size;
+            // if queue is full wait for completion
+            if (reads + writes >= QD)
+                break;
+            // if no more to read break
+            if (read_left == 0)
+                break;
 
-            {
-                // submit read for input file
-                var sqe = try ring.get_sqe();
-                sqe.opcode = .READV;
-                sqe.fd = file.handle;
-                sqe.flags |= std.os.linux.IOSQE_IO_LINK;
-                sqe.addr = @ptrCast(*u64, &iovec).*;
-                sqe.off = @intCast(u64, offset);
-                sqe.len = @intCast(u32, 1);
-
-                var el = &read_user_data[inflight];
-                el.iovec = iovec;
-                el.opcode = .READV;
-                sqe.user_data = @intCast(u64, @ptrToInt(el));
+            // if the size is bigger than block size
+            // just read one block
+            var read_size: usize = read_left;
+            if ( read_left > BS ) {
+                read_size = BS;
             }
-            offset += size;
-            // this seams wrong as we are not granted the read size
-            remaining -= size;
+            // try to read
+            try queue_read(&ring, read_size, offset);
+            // {
+            //     break;
+            // }
 
-            inflight += 1;
+            read_left -= read_size;
+            offset += read_size;
+            reads += 1;
+            read_done = true;
         }
-        var res = try ring.submit();
-        if (verbose) {
-            std.debug.print("submit inflight {} {} sqe \n", .{
-                inflight,
-                res,
+
+        // if at least one read have been done submit queue
+        if (read_done)
+        {
+
+            var ret = try ring.submit();
+            if (ret < 0)
+            {
+                std.debug.print("io_uring_submit read error\n");
+                break;
+            }
+        }
+        var io_data: *UserData = undefined;
+
+        // wait for cqe
+        var cqe = try ring.copy_cqe();
+        if (DEBUG) {
+            std.debug.print("received {} cqe \n", .{
+                cqe,
             });
         }
-        while (write_remaining > 0 and write_inflight < nb_sqes) {
-            // choose iovector
-            var iovec = &iovecs[write_inflight];
+        if (cqe.res < 0) {
+            switch (cqe.res) {
+                // os.ECANCELED => {
+                //     offset = user_data_el.offset;
+                // },
+                - os.EINVAL => {
+                    std.debug.warn("either you're trying to read too much data (can't read more than a isize), or the number of iovecs in a single SQE is > 1024\n", .{});
+                    std.process.exit(1);
+                },
+                else => {
+                    std.debug.warn("cqe errno: {}", .{cqe.res});
+                    std.process.exit(1);
+                },
+            }
+        }
 
-            // read iovec_size or write_remaining id < iovec_size
-            const size = if (write_remaining > iovec_size) iovec_size else write_remaining;
-            iovec.iov_len = size;
+        // read received
+        if (io_data.opcode == .READV)
+        {
+            // if we are reading data transfer it to the write buffer
+            //queue_write(&ring, io_data);
+            var ret = try ring.submit();
+            if (ret < 0)
             {
-                // submit write for outputfile
-                var sqe = try ring.get_sqe();
-                sqe.opcode = .WRITEV;
-                sqe.fd = output_file.handle;
-                sqe.addr = @ptrCast(*u64, &iovec).*;
-                sqe.off = @intCast(u64, write_offset);
-                sqe.len = @intCast(u32, 1);
+                std.debug.print("io_uring_submit read error\n");
+                break;
+            }
+            // write_left -= data.first_len;
+            reads -= 1;
+            writes += 1;
+        }
 
-                var el = &write_user_data[write_inflight];
-                el.iovec = iovec;
-                el.opcode = .WRITEV;
-                sqe.user_data = @intCast(u64, @ptrToInt(el));
-            }
-            write_offset += size;
-            // this seams wrong as we are not granted the read size
-            write_remaining -= size;
-
-            write_inflight += 1;
-
-        }
-        var res_w = try ring.submit();
-        if (verbose) {
-            std.debug.print("submit res_w inflight {} {} sqe \n", .{
-                inflight,
-                res_w,
-            });
-        }
-        _ = try ring.enter(
-            @intCast(u32, inflight + write_inflight),
-            @intCast(u32, inflight + write_inflight),
-            os.linux.IORING_ENTER_GETEVENTS,
-        );
-        while (inflight > 0) : (inflight -= 1) {
-            // wait for both cqe
-            var cqe = try ring.copy_cqe();
-            if (verbose) {
-                std.debug.print("received {} cqe \n", .{
-                    cqe,
-                });
-            }
-            if (cqe.res < 0) {
-                switch (cqe.res) {
-                    // os.ECANCELED => {
-                    //     offset = user_data_el.offset;
-                    // },
-                    - os.EINVAL => {
-                        std.debug.warn("either you're trying to read too much data (can't read more than a isize), or the number of iovecs in a single SQE is > 1024\n", .{});
-                        std.process.exit(1);
-                    },
-                    else => {
-                        std.debug.warn("cqe errno: {}", .{cqe.res});
-                        std.process.exit(1);
-                    },
-                }
-            }
-        }
-        while (write_inflight > 0) : (write_inflight -= 1) {
-            // wait for both cqe
-            var cqe = try ring.copy_cqe();
-            if (verbose) {
-                std.debug.print("received {} cqe \n", .{
-                    cqe,
-                });
-            }
-            if (cqe.res < 0) {
-                switch (cqe.res) {
-                    // os.ECANCELED => {
-                    //     offset = user_data_el.offset;
-                    // },
-                    - os.EINVAL => {
-                        std.debug.warn("either you're trying to read too much data (can't read more than a isize), or the number of iovecs in a single SQE is > 1024\n", .{});
-                        std.process.exit(1);
-                    },
-                    else => {
-                        std.debug.warn("cqe errno: {}", .{cqe.res});
-                        std.process.exit(1);
-                    },
-                }
-            }
-        }
     }
 }
