@@ -1,10 +1,9 @@
 const std = @import("std");
 const os = std.os;
 
-
 const DEBUG: bool = false;
 
-const QD :usize = 32;
+const QD :u13 = 32;
 const BS :usize = (16 * 1024);
 
 var infd :std.fs.File = undefined;
@@ -12,7 +11,7 @@ var outfd :std.fs.File = undefined;
 
 /// some code is borrowed from  Vincent Rischmann thx to him
 
-const UserData = struct {
+const IoData = struct {
     opcode: os.linux.IORING_OP,
     first_offset: usize,
     offset: usize,
@@ -20,18 +19,19 @@ const UserData = struct {
     iov: *os.iovec,
 };
 
-pub fn setup(entries: usize, params: *os.linux.io_uring_params) !os.fd_t {
-    @memset(@ptrCast([*]align(8) u8, params), 0, @sizeOf(@TypeOf(params.*)));
+pub fn setup(entries: u13, flags: u32) !os.linux.IO_Uring {
 
-    const ring_fd = os.linux.io_uring_setup(
-        @intCast(u32, entries),
-        params,
-    );
+    if (DEBUG) {
+        std.debug.print("setup {} {}\n", .{
+            entries,
+            flags,
+        });
+    }
 
-    return @intCast(i32, ring_fd);
+    return os.linux.IO_Uring.init(entries, flags);
 }
 
-pub fn queue_prepped(ring :os.linux.IO_Uring, ioData :*UserData) !void
+pub fn queue_prepped(ring :os.linux.IO_Uring, ioData :*IoData) !void
 {
 
     if (DEBUG){
@@ -130,11 +130,8 @@ pub fn main() anyerror!void {
 
     const insize = (try infd.stat()).size;
 
-    // Initialize io_
-    var params: os.linux.io_uring_params = undefined;
-    const ring_fd = try setup(QD, &params);
-
-    var ring = try std.os.linux.IO_Uring.init(32, 0);
+    // Initialize io_uring
+    var ring = try setup(QD, 0);
 
     var reads: usize = 0;
     var writes: usize = 0;
@@ -194,7 +191,7 @@ pub fn main() anyerror!void {
                 break;
             }
         }
-        var io_data: *UserData = undefined;
+        var io_data: *IoData = undefined;
 
         // wait for cqe
         var cqe = try ring.copy_cqe();
