@@ -12,11 +12,11 @@ var outfd :std.fs.File = undefined;
 /// some code is borrowed from  Vincent Rischmann thx to him
 
 const IoData = struct {
-    opcode: os.linux.IORING_OP,
+    rw_flag: os.linux.IORING_OP,
     first_offset: usize,
     offset: usize,
     first_len :usize,
-    iov: *os.iovec,
+    iov: [] os.iovec,
 };
 
 pub fn setup(entries: u13, flags: u32) !os.linux.IO_Uring {
@@ -31,73 +31,69 @@ pub fn setup(entries: u13, flags: u32) !os.linux.IO_Uring {
     return os.linux.IO_Uring.init(entries, flags);
 }
 
-pub fn queue_prepped(ring :os.linux.IO_Uring, ioData :*IoData) !void
+pub fn queue_prepped(ring :*os.linux.IO_Uring, data :*IoData) !void
 {
-
     if (DEBUG){
             std.debug.print("queue_prepped {} {}\n", .{
                 ring,
-                ioData,
+                data,
             });
     }
-    var sqe = try ring.get_sqe();
-
-    if (ioData.opcode == .READV)  {
-        sqe.opcode = .READV;
-        sqe.fd = infd.handle;
-        sqe.flags |= std.os.linux.IOSQE_IO_LINK;
-        sqe.addr = @ptrCast(*u64, &iovec).*;
-        sqe.off = @intCast(u64, offset);
-        sqe.len = @intCast(u32, 1);
-        var el = &read_user_data[inflight];
-        el.iov = iovec;
-        el.opcode = .READV;
-        sqe.user_data = @intCast(u64, @ptrToInt(el));
-    } else {
-        sqe.opcode = .WRITEV;
-        sqe.fd = outfd.handle;
-        sqe.addr = @ptrCast(*u64, &iovec).*;
-        sqe.off = @intCast(u64, write_offset);
-        sqe.len = @intCast(u32, 1);
-
-        var el = &write_user_data[write_inflight];
-        el.iov = iovec;
-        el.opcode = .WRITEV;
-        sqe.user_data = @intCast(u64, @ptrToInt(el));
-    }
-}
-
-pub fn queue_read(ring :*os.linux.IO_Uring, size :usize, offset :usize) !void
-{
-    // submit read for input file
-    var sqe = try ring.get_sqe();
-    sqe.opcode = .READV;
-    sqe.fd = infd.handle;
-    sqe.flags |= std.os.linux.IOSQE_IO_LINK;
-    //sqe.addr = @ptrCast(*u64, &iovec).*;
-    sqe.off = @intCast(u64, offset);
-    sqe.len = @intCast(u32, 1);
-
-    // var el = &read_user_data[inflight];
-    // el.iov = iovec;
-    // el.opcode = .READV;
-    // sqe.user_data = @intCast(u64, @ptrToInt(el));
-}
-
-pub fn queue_write(ring :os.linux.IO_Uring, size :usize, offset :usize) !void
-{
-    // submit read for input file
     const sqe = try ring.get_sqe();
-    sqe.opcode = .WRITEV;
-    sqe.fd = outfd.handle;
-    sqe.addr = @ptrCast(*u64, &iovec).*;
-    sqe.off = @intCast(u64, write_offset);
-    sqe.len = @intCast(u32, 1);
 
-    var el = &write_user_data[write_inflight];
-    el.iov = iovec;
-    el.opcode = .WRITEV;
-    sqe.user_data = @intCast(u64, @ptrToInt(el));
+    if (data.rw_flag == .READV)  {
+        os.linux.io_uring_prep_readv(sqe, infd.handle, data.iov, data.offset);
+    } else {
+        os.linux.io_uring_prep_writev(sqe, outfd.handle, @ptrCast(*[]const os.iovec_const, &data.iov).*, data.offset);
+    }
+
+    sqe.user_data = @ptrToInt(data);
+}
+
+pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size :usize, offset :usize) !void
+{
+    if (DEBUG){
+            std.debug.print("queue_read {} {}\n", .{
+                size,
+                offset,
+            });
+    }
+    var data: *IoData = try allocator.create(IoData);
+    data.rw_flag = .READV;
+
+    data.first_offset = offset;
+    data.offset = offset;
+    data.iov = try allocator.alloc(os.iovec, 1);
+    var buf = try allocator.allocWithOptions(u8, size, null, null);
+    data.iov[0].iov_base = @ptrCast([*]u8, buf);
+    data.iov[0].iov_len = buf.len;
+
+    data.first_len = size;
+
+    const sqe = try ring.get_sqe();
+
+    os.linux.io_uring_prep_readv(sqe, infd.handle, data.iov, data.offset);
+
+    sqe.user_data = @ptrToInt(data);
+}
+
+pub fn queue_write(ring :*os.linux.IO_Uring, data :*IoData) !void
+{
+    if (DEBUG){
+            std.debug.print("queue_write {}\n", .{
+                data,
+            });
+    }
+    // indicate write flag
+    data.rw_flag = .WRITEV;
+
+    data.offset = data.first_offset;
+
+    const sqe = try ring.get_sqe();
+
+    os.linux.io_uring_prep_writev(sqe, outfd.handle, @ptrCast(*[]const os.iovec_const, &data.iov).*, data.offset);
+
+    sqe.user_data = @ptrToInt(data);
 }
 
 pub fn main() anyerror!void {
@@ -133,8 +129,12 @@ pub fn main() anyerror!void {
     // Initialize io_uring
     var ring = try setup(QD, 0);
 
+    // pending reads sent to sqe
     var reads: usize = 0;
+
+    // pending reads sent to sqe
     var writes: usize = 0;
+
     var offset: usize = 0;
 
     var write_left: usize = insize;
@@ -147,14 +147,20 @@ pub fn main() anyerror!void {
     // wait for last write submission writes > 0
     while ( write_left > 0 or writes > 0 )
     {
-
+        if (DEBUG){
+                std.debug.print("while write {} {}\n", .{
+                    write_left,
+                    writes,
+                });
+        }
         read_done = false;
 
         while (read_left > 0)
         {
-            // choose iovector
-            //var iovec = &iovecs[inflight];
+            std.debug.print("while read {}\n", .{
+                read_left,
 
+            });
             // if queue is full wait for completion
             if (reads + writes >= QD)
                 break;
@@ -169,10 +175,13 @@ pub fn main() anyerror!void {
                 read_size = BS;
             }
             // try to read
-            try queue_read(&ring, read_size, offset);
-            // {
-            //     break;
-            // }
+            queue_read(&ring, allocator, read_size, offset) catch {
+                if (DEBUG){
+                        std.debug.print("queue_read fail sqe is full\n", .{
+                        });
+                }
+                break;
+            };
 
             read_left -= read_size;
             offset += read_size;
@@ -183,7 +192,9 @@ pub fn main() anyerror!void {
         // if at least one read have been done submit queue
         if (read_done)
         {
-
+            if (DEBUG) {
+                std.debug.print("submit read\n", .{});
+            }
             var ret = try ring.submit();
             if (ret < 0)
             {
@@ -191,21 +202,30 @@ pub fn main() anyerror!void {
                 break;
             }
         }
-        var io_data: *IoData = undefined;
-
+        if (DEBUG) {
+            std.debug.print("wait for cqe w:{} r:{}\n", .{
+                writes,
+                reads,
+            });
+        }
         // wait for cqe
         var cqe = try ring.copy_cqe();
         if (DEBUG) {
-            std.debug.print("received {} cqe \n", .{
+            std.debug.print("received cqe {}  \n", .{
                 cqe,
             });
         }
+
+        var io_data: *IoData = @intToPtr(*IoData, cqe.user_data);
         if (cqe.res < 0) {
             switch (cqe.res) {
-                // os.ECANCELED => {
-                //     offset = user_data_el.offset;
-                // },
-                - os.EINVAL => {
+                -std.os.EAGAIN => {
+                    // push the operation again
+                    try queue_prepped(&ring, io_data);
+                    //io_uring_cqe_seen(ring, cqe);
+                    continue;
+                },
+                -os.EINVAL => {
                     std.debug.warn("either you're trying to read too much data (can't read more than a isize), or the number of iovecs in a single SQE is > 1024\n", .{});
                     std.process.exit(1);
                 },
@@ -215,21 +235,36 @@ pub fn main() anyerror!void {
                 },
             }
         }
+        //else if (cqe.res != io_data.iov[0].iov_len)
+        // {
+        //     // read or write is shorter than expected
+        //     // adjusting the queue size accordingly
+        //     io_data.iov[0].iov_base += @intCast(usize, cqe.res);
+        //     io_data.iov[0].iov_len -= @intCast(usize, cqe.res);
+        //     // push the operation for missing data
+        //     try queue_prepped(&ring, io_data);
+        //     //io_uring_cqe_seen(ring, cqe);
+        //     continue;
+        // }
 
         // read received
-        if (io_data.opcode == .READV)
+        if (io_data.rw_flag == .READV)
         {
             // if we are reading data transfer it to the write buffer
-            //queue_write(&ring, io_data);
+            try queue_write(&ring, io_data);
             var ret = try ring.submit();
             if (ret < 0)
             {
-                std.debug.print("io_uring_submit read error\n");
+                std.debug.print("io_uring_submit write error\n");
                 break;
             }
-            // write_left -= data.first_len;
+            write_left -= io_data.first_len;
             reads -= 1;
             writes += 1;
+        }       else
+        {
+
+            writes -= 1;
         }
 
     }
