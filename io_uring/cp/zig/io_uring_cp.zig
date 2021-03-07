@@ -54,7 +54,7 @@ pub fn queue_prepped(ring :*os.linux.IO_Uring, data :*IoData) !void
 pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size :usize, offset :usize) !void
 {
     if (DEBUG){
-            std.debug.print("queue_read {} {}\n", .{
+            std.debug.print("   queue_read size:{} offset:{}\n", .{
                 size,
                 offset,
             });
@@ -67,14 +67,14 @@ pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size 
 
     data.iov = try allocator.alloc(os.iovec, 1);
 
-    var buf = try allocator.alloc(u8, size);
-    data.iov[0].iov_base = @ptrCast([*]u8, buf);
+    const buf = try allocator.alloc(u8, size);
+    data.iov[0].iov_base = buf.ptr;
     data.iov[0].iov_len = buf.len;
 
     data.first_len = size;
 
 
-
+    // get submission queue
     const sqe = try ring.get_sqe();
 
     os.linux.io_uring_prep_readv(sqe, infd.handle, data.iov, data.offset);
@@ -272,6 +272,7 @@ pub fn main() anyerror!void {
         {
             allocator.destroy(io_data.iov[0].iov_base);
             allocator.free(io_data.iov);
+            allocator.destroy(io_data);
             writes -= 1;
         }
 
