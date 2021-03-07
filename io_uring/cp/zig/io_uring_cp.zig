@@ -60,18 +60,17 @@ pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size 
             });
     }
     var data: *IoData = try allocator.create(IoData);
-    data.rw_flag = .READV;
-
-    data.first_offset = offset;
-    data.offset = offset;
-
-    data.iov = try allocator.alloc(os.iovec, 1);
+    data.* = .{
+        .rw_flag = .READV,
+        .first_offset = offset,
+        .offset = offset,
+        .iov = try allocator.alloc(os.iovec, 1),
+        .first_len = size,
+    };
 
     const buf = try allocator.alloc(u8, size);
     data.iov[0].iov_base = buf.ptr;
     data.iov[0].iov_len = buf.len;
-
-    data.first_len = size;
 
 
     // get submission queue
