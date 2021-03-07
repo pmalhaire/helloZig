@@ -64,12 +64,16 @@ pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size 
 
     data.first_offset = offset;
     data.offset = offset;
-    var buf = try allocator.alloc(u8, size);
+
     data.iov = try allocator.alloc(os.iovec, 1);
+
+    var buf = try allocator.alloc(u8, size);
     data.iov[0].iov_base = @ptrCast([*]u8, buf);
     data.iov[0].iov_len = buf.len;
 
     data.first_len = size;
+
+
 
     const sqe = try ring.get_sqe();
 
@@ -266,8 +270,7 @@ pub fn main() anyerror!void {
             writes += 1;
         }       else
         {
-            // todo fix this allocation
-            //allocator.free(io_data.iov[0].iov_base);
+            allocator.destroy(io_data.iov[0].iov_base);
             allocator.free(io_data.iov);
             writes -= 1;
         }
