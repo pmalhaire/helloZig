@@ -44,6 +44,7 @@ pub fn queue_prepped(ring :*os.linux.IO_Uring, data :*IoData) !void
     if (data.rw_flag == .READV)  {
         os.linux.io_uring_prep_readv(sqe, infd.handle, data.iov, data.offset);
     } else {
+        // kinda const cast (did not found better)
         os.linux.io_uring_prep_writev(sqe, outfd.handle, @ptrCast(*[]const os.iovec_const, &data.iov).*, data.offset);
     }
 
@@ -63,8 +64,8 @@ pub fn queue_read(ring :*os.linux.IO_Uring, allocator :*std.mem.Allocator, size 
 
     data.first_offset = offset;
     data.offset = offset;
+    var buf = try allocator.alloc(u8, size);
     data.iov = try allocator.alloc(os.iovec, 1);
-    var buf = try allocator.allocWithOptions(u8, size, null, null);
     data.iov[0].iov_base = @ptrCast([*]u8, buf);
     data.iov[0].iov_len = buf.len;
 
@@ -157,10 +158,12 @@ pub fn main() anyerror!void {
 
         while (read_left > 0)
         {
-            std.debug.print("while read {}\n", .{
-                read_left,
+            if (DEBUG){
+                std.debug.print("while read {}\n", .{
+                    read_left,
 
-            });
+                });
+            }
             // if queue is full wait for completion
             if (reads + writes >= QD)
                 break;
@@ -263,7 +266,9 @@ pub fn main() anyerror!void {
             writes += 1;
         }       else
         {
-
+            // todo fix this allocation
+            //allocator.free(io_data.iov[0].iov_base);
+            allocator.free(io_data.iov);
             writes -= 1;
         }
 
